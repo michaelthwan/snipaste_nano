@@ -28,9 +28,10 @@ class CaptureOverlay(QtWidgets.QWidget):
     captured = QtCore.Signal(QtCore.QRect)
     cancelled = QtCore.Signal()
 
-    def __init__(self, screen: QtGui.QScreen) -> None:
+    def __init__(self, screen: QtGui.QScreen, pixmap: QtGui.QPixmap) -> None:
         super().__init__()
         self._screen = screen
+        self._pixmap = pixmap
         self._origin = None
         self._current = None
         self.setWindowFlags(
@@ -55,9 +56,13 @@ class CaptureOverlay(QtWidgets.QWidget):
 
     def paintEvent(self, _event) -> None:
         painter = QtGui.QPainter(self)
+        if not self._pixmap.isNull():
+            painter.drawPixmap(self.rect(), self._pixmap)
         painter.fillRect(self.rect(), QtGui.QColor(0, 0, 0, 90))
         rect = self._selection_rect()
         if rect is not None and rect.width() > 0 and rect.height() > 0:
+            if not self._pixmap.isNull():
+                painter.drawPixmap(rect, self._pixmap, rect)
             pen = QtGui.QPen(QtGui.QColor(255, 80, 80), 2)
             painter.setPen(pen)
             painter.drawRect(rect)
@@ -447,6 +452,7 @@ class SnipasteNanoApp:
         self.app.setApplicationName("Snipaste Nano")
         self._hotkey_registered = False
         self._overlay = None
+        self._capture_pixmap = None
         self._floating_windows = []
 
         self._hotkey_filter = HotkeyFilter(self.start_capture)
@@ -473,7 +479,12 @@ class SnipasteNanoApp:
         if screen is None:
             print("No screen available for capture.")
             return
-        self._overlay = CaptureOverlay(screen)
+        pixmap = screen.grabWindow(0)
+        if pixmap.isNull():
+            print("No screen content available for capture.")
+            return
+        self._capture_pixmap = pixmap
+        self._overlay = CaptureOverlay(screen, pixmap)
         self._overlay.captured.connect(self._handle_capture)
         self._overlay.cancelled.connect(self._clear_overlay)
         self._overlay.show()
@@ -481,17 +492,22 @@ class SnipasteNanoApp:
 
     def _clear_overlay(self) -> None:
         if self._overlay is not None:
+            self._overlay.hide()
             self._overlay.deleteLater()
             self._overlay = None
+        self._capture_pixmap = None
 
     def _handle_capture(self, rect: QtCore.QRect) -> None:
-        screen = QtGui.QGuiApplication.primaryScreen()
-        if screen is None:
-            self._clear_overlay()
-            return
+        pixmap = self._capture_pixmap
         self._clear_overlay()
 
-        pixmap = screen.grabWindow(0)
+        if pixmap is None or pixmap.isNull():
+            screen = QtGui.QGuiApplication.primaryScreen()
+            if screen is None:
+                return
+            pixmap = screen.grabWindow(0)
+            if pixmap.isNull():
+                return
         ratio = pixmap.devicePixelRatio()
         scaled_rect = QtCore.QRect(
             int(rect.x() * ratio),
