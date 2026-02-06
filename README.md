@@ -19,7 +19,10 @@ python main.py
 - Click-and-drag to select the rectangle.
 - Release to capture and show the floating image window.
 - Drag the floating window to reposition it.
-- Click the image to focus it, then press `Esc` to close it.
+- Press `Space` while focused to toggle the toolbar.
+- Click the pen tool to pick a color, then draw on the image.
+- Scroll the size button to change brush size.
+- Press `Esc` once to exit pen mode and hide toolbar; press again to close.
 
 ## Notes
 
