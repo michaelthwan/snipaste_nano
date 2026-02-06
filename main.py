@@ -96,6 +96,8 @@ class FloatingWindow(QtWidgets.QWidget):
     def __init__(self, pixmap: QtGui.QPixmap) -> None:
         super().__init__()
         self._drag_offset = None
+        self._base_pixmap = pixmap
+        self._scale = 1.0
         self.setWindowFlags(
             QtCore.Qt.FramelessWindowHint
             | QtCore.Qt.WindowStaysOnTopHint
@@ -132,6 +134,29 @@ class FloatingWindow(QtWidgets.QWidget):
     def keyPressEvent(self, event: QtGui.QKeyEvent) -> None:
         if event.key() == QtCore.Qt.Key_Escape:
             self.close()
+
+    def wheelEvent(self, event: QtGui.QWheelEvent) -> None:
+        delta = event.angleDelta().y()
+        if delta == 0:
+            return
+        factor = 1.1 if delta > 0 else 0.9
+        self._scale = max(0.2, min(5.0, self._scale * factor))
+        self._apply_scale()
+
+    def _apply_scale(self) -> None:
+        size = self._base_pixmap.size()
+        new_size = QtCore.QSize(
+            int(size.width() * self._scale), int(size.height() * self._scale)
+        )
+        if new_size.width() < 1 or new_size.height() < 1:
+            return
+        scaled = self._base_pixmap.scaled(
+            new_size,
+            QtCore.Qt.KeepAspectRatio,
+            QtCore.Qt.SmoothTransformation,
+        )
+        self._label.setPixmap(scaled)
+        self.resize(scaled.size())
 
 
 class SnipasteNanoApp:
