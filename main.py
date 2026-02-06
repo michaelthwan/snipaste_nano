@@ -134,6 +134,11 @@ class FloatingWindow(QtWidgets.QWidget):
         self._update_pen_button_style()
         self._toolbar_layout.addWidget(self._pen_button)
 
+        self._copy_button = QtWidgets.QToolButton(self._toolbar)
+        self._copy_button.setText("Copy")
+        self._copy_button.clicked.connect(self.copy_to_clipboard)
+        self._toolbar_layout.addWidget(self._copy_button)
+
         self._toolbar_layout.addStretch(1)
 
         self._canvas = CanvasWidget(self._image, self)
@@ -148,6 +153,10 @@ class FloatingWindow(QtWidgets.QWidget):
             QtGui.QKeySequence(QtCore.Qt.Key_Space), self
         )
         self._space_shortcut.activated.connect(self._toggle_toolbar)
+        self._copy_shortcut = QtGui.QShortcut(
+            QtGui.QKeySequence.Copy, self
+        )
+        self._copy_shortcut.activated.connect(self.copy_to_clipboard)
 
         self._apply_scale()
         self.adjustSize()
@@ -294,6 +303,10 @@ class FloatingWindow(QtWidgets.QWidget):
     def end_draw(self) -> None:
         self._drawing = False
         self._last_point = None
+
+    def copy_to_clipboard(self) -> None:
+        clipboard = QtWidgets.QApplication.clipboard()
+        clipboard.setImage(self._image)
 
 
 class CanvasWidget(QtWidgets.QWidget):

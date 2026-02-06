@@ -13,6 +13,15 @@ pip install -r requirements.txt
 python main.py
 ```
 
+## Conda Setup
+
+```powershell
+conda create -n snipaste_nano python=3.11 -y
+conda activate snipaste_nano
+pip install -r requirements.txt
+python main.py
+```
+
 ## Usage
 
 - Press `F1` to start a capture.
@@ -22,6 +31,7 @@ python main.py
 - Press `Space` while focused to toggle the toolbar.
 - Click the pen tool to pick a color, then draw on the image.
 - Scroll the size button to change brush size.
+- Press `Ctrl+C` (normal mode) or click `Copy` to copy to clipboard.
 - Press `Esc` once to exit pen mode and hide toolbar; press again to close.
 
 ## Notes
