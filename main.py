@@ -140,7 +140,7 @@ class SnipasteNanoApp:
         self.app.setApplicationName("Snipaste Nano")
         self._hotkey_registered = False
         self._overlay = None
-        self._floating = None
+        self._floating_windows = []
 
         self._hotkey_filter = HotkeyFilter(self.start_capture)
         self.app.installNativeEventFilter(self._hotkey_filter)
@@ -202,11 +202,19 @@ class SnipasteNanoApp:
         self._show_floating(cropped)
 
     def _show_floating(self, pixmap: QtGui.QPixmap) -> None:
-        if self._floating is not None:
-            self._floating.close()
-        self._floating = FloatingWindow(pixmap)
-        self._floating.show()
-        self._floating.activateWindow()
+        floating = FloatingWindow(pixmap)
+        self._floating_windows.append(floating)
+        floating.destroyed.connect(
+            lambda _obj=None, win=floating: self._discard_window(win)
+        )
+        floating.show()
+        floating.activateWindow()
+
+    def _discard_window(self, window: FloatingWindow) -> None:
+        try:
+            self._floating_windows.remove(window)
+        except ValueError:
+            pass
 
     def run(self) -> int:
         return self.app.exec()
