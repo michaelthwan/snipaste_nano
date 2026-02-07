@@ -1,4 +1,5 @@
 import ctypes
+import signal
 import sys
 from ctypes import wintypes
 
@@ -100,6 +101,7 @@ class CaptureOverlay(QtWidgets.QWidget):
 class FloatingWindow(QtWidgets.QWidget):
     def __init__(self, pixmap: QtGui.QPixmap) -> None:
         super().__init__()
+        self._border_width = 1
         self._drag_offset = None
         self._base_pixmap = pixmap
         self._image = pixmap.toImage().convertToFormat(QtGui.QImage.Format_ARGB32)
@@ -118,7 +120,12 @@ class FloatingWindow(QtWidgets.QWidget):
         self.setFocusPolicy(QtCore.Qt.StrongFocus)
 
         layout = QtWidgets.QVBoxLayout(self)
-        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setContentsMargins(
+            self._border_width,
+            self._border_width,
+            self._border_width,
+            self._border_width,
+        )
         layout.setSpacing(0)
 
         self._toolbar = QtWidgets.QWidget(self)
@@ -165,6 +172,15 @@ class FloatingWindow(QtWidgets.QWidget):
 
         self._apply_scale()
         self.adjustSize()
+
+    def paintEvent(self, event: QtGui.QPaintEvent) -> None:
+        super().paintEvent(event)
+        painter = QtGui.QPainter(self)
+        pen = QtGui.QPen(QtGui.QColor(0, 0, 0), self._border_width)
+        painter.setPen(pen)
+        painter.setBrush(QtCore.Qt.NoBrush)
+        rect = self.rect().adjusted(0, 0, -1, -1)
+        painter.drawRect(rect)
 
     def mousePressEvent(self, event: QtGui.QMouseEvent) -> None:
         if event.button() != QtCore.Qt.LeftButton:
@@ -460,6 +476,16 @@ class SnipasteNanoApp:
         self.app.installNativeEventFilter(self._hotkey_filter)
         self._register_hotkey()
         self.app.aboutToQuit.connect(self._cleanup_hotkey)
+        self._enable_sigint_exit()
+
+    def _enable_sigint_exit(self) -> None:
+        def _handle_sigint(_signum, _frame) -> None:
+            self.app.quit()
+
+        signal.signal(signal.SIGINT, _handle_sigint)
+        self._sigint_timer = QtCore.QTimer(self.app)
+        self._sigint_timer.timeout.connect(lambda: None)
+        self._sigint_timer.start(200)
 
     def _register_hotkey(self) -> None:
         user32 = ctypes.windll.user32
