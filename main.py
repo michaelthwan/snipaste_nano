@@ -63,7 +63,7 @@ class CaptureOverlay(QtWidgets.QWidget):
         if rect is not None and rect.width() > 0 and rect.height() > 0:
             if not self._pixmap.isNull():
                 painter.drawPixmap(rect, self._pixmap, rect)
-            pen = QtGui.QPen(QtGui.QColor(255, 80, 80), 2)
+            pen = QtGui.QPen(QtGui.QColor(0, 0, 0), 2)
             painter.setPen(pen)
             painter.drawRect(rect)
 
@@ -453,6 +453,7 @@ class SnipasteNanoApp:
         self._hotkey_registered = False
         self._overlay = None
         self._capture_pixmap = None
+        self._capture_screen = None
         self._floating_windows = []
 
         self._hotkey_filter = HotkeyFilter(self.start_capture)
@@ -475,7 +476,10 @@ class SnipasteNanoApp:
     def start_capture(self) -> None:
         if self._overlay is not None:
             return
-        screen = QtGui.QGuiApplication.primaryScreen()
+        cursor_pos = QtGui.QCursor.pos()
+        screen = QtGui.QGuiApplication.screenAt(cursor_pos)
+        if screen is None:
+            screen = QtGui.QGuiApplication.primaryScreen()
         if screen is None:
             print("No screen available for capture.")
             return
@@ -484,6 +488,7 @@ class SnipasteNanoApp:
             print("No screen content available for capture.")
             return
         self._capture_pixmap = pixmap
+        self._capture_screen = screen
         self._overlay = CaptureOverlay(screen, pixmap)
         self._overlay.captured.connect(self._handle_capture)
         self._overlay.cancelled.connect(self._clear_overlay)
@@ -496,13 +501,16 @@ class SnipasteNanoApp:
             self._overlay.deleteLater()
             self._overlay = None
         self._capture_pixmap = None
+        self._capture_screen = None
 
     def _handle_capture(self, rect: QtCore.QRect) -> None:
         pixmap = self._capture_pixmap
+        screen = self._capture_screen
         self._clear_overlay()
 
         if pixmap is None or pixmap.isNull():
-            screen = QtGui.QGuiApplication.primaryScreen()
+            if screen is None:
+                screen = QtGui.QGuiApplication.primaryScreen()
             if screen is None:
                 return
             pixmap = screen.grabWindow(0)
