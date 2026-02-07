@@ -9,6 +9,7 @@ WM_HOTKEY = 0x0312
 HOTKEY_ID = 1
 MOD_NOREPEAT = 0x4000
 VK_F1 = 0x70
+MAC_F1_KEYCODE = 122
 
 
 class HotkeyFilter(QtCore.QAbstractNativeEventFilter):
@@ -462,8 +463,9 @@ class ColorPopup(QtWidgets.QFrame):
         self.close()
 
 
-class SnipasteNanoApp:
+class SnipasteNanoApp(QtCore.QObject):
     def __init__(self) -> None:
+        super().__init__()
         self.app = QtWidgets.QApplication(sys.argv)
         self.app.setApplicationName("Snipaste Nano")
         self._hotkey_registered = False
@@ -471,10 +473,18 @@ class SnipasteNanoApp:
         self._capture_pixmap = None
         self._capture_screen = None
         self._floating_windows = []
+        self._hotkey_filter = None
+        self._mac_monitor = None
+        self._mac_monitor_local = None
+        self._mac_global_handler = None
+        self._mac_local_handler = None
 
-        self._hotkey_filter = HotkeyFilter(self.start_capture)
-        self.app.installNativeEventFilter(self._hotkey_filter)
-        self._register_hotkey()
+        if sys.platform == "win32":
+            self._hotkey_filter = HotkeyFilter(self.start_capture)
+            self.app.installNativeEventFilter(self._hotkey_filter)
+            self._register_hotkey()
+        elif sys.platform == "darwin":
+            self._register_hotkey_macos()
         self.app.aboutToQuit.connect(self._cleanup_hotkey)
         self._enable_sigint_exit()
 
@@ -495,9 +505,45 @@ class SnipasteNanoApp:
         if not self._hotkey_registered:
             print("Warning: global F1 hotkey registration failed.")
 
+    def _register_hotkey_macos(self) -> None:
+        try:
+            from AppKit import NSEvent, NSEventMaskKeyDown
+        except Exception as exc:
+            print(f"Warning: macOS hotkey unavailable: {exc}")
+            return
+
+        def handle_global(event) -> None:
+            if event.keyCode() == MAC_F1_KEYCODE and not event.isARepeat():
+                self._queue_capture()
+
+        def handle_local(event):
+            if event.keyCode() == MAC_F1_KEYCODE and not event.isARepeat():
+                self._queue_capture()
+            return event
+
+        self._mac_global_handler = handle_global
+        self._mac_local_handler = handle_local
+        self._mac_monitor = NSEvent.addGlobalMonitorForEventsMatchingMask_handler_(
+            NSEventMaskKeyDown, handle_global
+        )
+        self._mac_monitor_local = NSEvent.addLocalMonitorForEventsMatchingMask_handler_(
+            NSEventMaskKeyDown, handle_local
+        )
+
     def _cleanup_hotkey(self) -> None:
-        if self._hotkey_registered:
+        if self._hotkey_registered and sys.platform == "win32":
             ctypes.windll.user32.UnregisterHotKey(None, HOTKEY_ID)
+        if sys.platform == "darwin":
+            try:
+                from AppKit import NSEvent
+            except Exception:
+                return
+            if self._mac_monitor is not None:
+                NSEvent.removeMonitor_(self._mac_monitor)
+                self._mac_monitor = None
+            if self._mac_monitor_local is not None:
+                NSEvent.removeMonitor_(self._mac_monitor_local)
+                self._mac_monitor_local = None
 
     def start_capture(self) -> None:
         if self._overlay is not None:
@@ -520,6 +566,15 @@ class SnipasteNanoApp:
         self._overlay.cancelled.connect(self._clear_overlay)
         self._overlay.show()
         self._overlay.activateWindow()
+
+    @QtCore.Slot()
+    def _invoke_capture(self) -> None:
+        self.start_capture()
+
+    def _queue_capture(self) -> None:
+        QtCore.QMetaObject.invokeMethod(
+            self, "_invoke_capture", QtCore.Qt.QueuedConnection
+        )
 
     def _clear_overlay(self) -> None:
         if self._overlay is not None:

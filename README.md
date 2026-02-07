@@ -1,8 +1,9 @@
 # Snipaste Nano (Prototype)
 
 Lightweight prototype of a Snipaste-like workflow using Python + Qt. Press
-`F1` to draw a rectangle, then a floating window shows the capture. Drag the
-floating window to move it, and press `Esc` to close it when focused.
+`F1` (Windows) or `fn+F1` (macOS) to draw a rectangle, then a floating window
+shows the capture. Drag the floating window to move it, and press `Esc` to
+close it when focused.
 
 ## Quick Start
 
@@ -33,7 +34,7 @@ python main.py
 
 ## Usage
 
-- Press `F1` to start a capture.
+- Press `F1` (Windows) or `fn+F1` (macOS) to start a capture.
 - Click-and-drag to select the rectangle.
 - Release to capture and show the floating image window.
 - Drag the floating window to reposition it.
@@ -47,7 +48,10 @@ python main.py
 
 - Global `F1` uses Win32 `RegisterHotKey` via `ctypes`. If policy blocks it,
   `F1` will not trigger; the rest of the app still runs.
-- This MVP uses the primary monitor and does not handle multi-monitor capture.
+- On macOS, install `pyobjc-framework-Cocoa==12.1` and use `fn+F1` (or enable
+  "Use F1, F2, etc. keys as standard function keys" to use `F1` alone).
+- macOS may prompt for Input Monitoring permission so the global hotkey works.
+- Capture activates on the monitor under the mouse cursor.
 - Close the app with `Ctrl+C` in the terminal.
 
 ## Stack Notes
