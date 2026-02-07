@@ -22,6 +22,15 @@ pip install -r requirements.txt
 python main.py
 ```
 
+## UV Setup
+
+```cmd
+uv venv
+.\.venv\Scripts\activate
+uv pip install -r requirements.txt
+python main.py
+```
+
 ## Usage
 
 - Press `F1` to start a capture.
