@@ -112,6 +112,9 @@ class FloatingWindow(QtWidgets.QWidget):
         self._brush_color = QtGui.QColor(220, 30, 30)
         self._drawing = False
         self._last_point = None
+        self._draw_mode = "pen"
+        self._line_start = None
+        self._line_end = None
         self._undo_stack = []
         self._color_popup = None
         self.setWindowFlags(
@@ -147,6 +150,13 @@ class FloatingWindow(QtWidgets.QWidget):
         self._pen_button.setFixedSize(32, 32)
         self._update_pen_button_style()
         self._toolbar_layout.addWidget(self._pen_button)
+
+        self._line_button = QtWidgets.QToolButton(self._toolbar)
+        self._line_button.setText("╱")
+        self._line_button.setCheckable(True)
+        self._line_button.clicked.connect(self._toggle_line)
+        self._line_button.setFixedSize(32, 32)
+        self._toolbar_layout.addWidget(self._line_button)
 
         self._undo_button = QtWidgets.QToolButton(self._toolbar)
         self._undo_button.setText("Undo")
@@ -249,15 +259,30 @@ class FloatingWindow(QtWidgets.QWidget):
         self.move(global_pos - self._drag_offset)
 
     def _toggle_pen(self) -> None:
-        self._set_pen_active(self._pen_button.isChecked())
-        if self._pen_active:
+        if self._pen_button.isChecked():
+            self._draw_mode = "pen"
+            self._line_button.setChecked(False)
+            self._set_pen_active(True)
             self._show_color_popup()
         else:
+            self._set_pen_active(False)
+            self._close_color_popup()
+
+    def _toggle_line(self) -> None:
+        if self._line_button.isChecked():
+            self._draw_mode = "line"
+            self._pen_button.setChecked(False)
+            self._set_pen_active(True)
+            self._show_color_popup()
+        else:
+            self._set_pen_active(False)
             self._close_color_popup()
 
     def _set_pen_active(self, active: bool) -> None:
         self._pen_active = active
-        self._pen_button.setChecked(active)
+        if not active:
+            self._pen_button.setChecked(False)
+            self._line_button.setChecked(False)
         self._canvas.set_pen_active(active)
         if not active:
             self.end_draw()
@@ -321,27 +346,64 @@ class FloatingWindow(QtWidgets.QWidget):
         self._canvas._image = self._image
         self._canvas.update()
 
+    def _snap_line_end(self, start: QtCore.QPoint, end: QtCore.QPoint) -> QtCore.QPoint:
+        dx = abs(end.x() - start.x())
+        dy = abs(end.y() - start.y())
+        if dx >= dy:
+            return QtCore.QPoint(end.x(), start.y())
+        else:
+            return QtCore.QPoint(start.x(), end.y())
+
     def start_draw(self, pos: QtCore.QPoint) -> None:
         if not self._pen_active:
             return
         self._undo_stack.append(self._image.copy())
         self._drawing = True
-        self._last_point = pos
+        if self._draw_mode == "line":
+            self._line_start = pos
+            self._line_end = pos
+        else:
+            self._last_point = pos
 
     def draw_to(self, pos: QtCore.QPoint) -> None:
-        if not self._drawing or self._last_point is None:
+        if not self._drawing:
             return
-        painter = QtGui.QPainter(self._image)
-        pen = QtGui.QPen(
-            self._brush_color, self._brush_size, QtCore.Qt.SolidLine, QtCore.Qt.RoundCap
-        )
-        painter.setPen(pen)
-        painter.drawLine(self._last_point, pos)
-        painter.end()
-        self._last_point = pos
-        self._canvas.update()
+        if self._draw_mode == "line":
+            if self._line_start is None:
+                return
+            end = pos
+            if QtWidgets.QApplication.keyboardModifiers() & QtCore.Qt.ControlModifier:
+                end = self._snap_line_end(self._line_start, end)
+            self._line_end = end
+            self._canvas.update()
+        else:
+            if self._last_point is None:
+                return
+            painter = QtGui.QPainter(self._image)
+            pen = QtGui.QPen(
+                self._brush_color, self._brush_size, QtCore.Qt.SolidLine, QtCore.Qt.RoundCap
+            )
+            painter.setPen(pen)
+            painter.drawLine(self._last_point, pos)
+            painter.end()
+            self._last_point = pos
+            self._canvas.update()
 
     def end_draw(self) -> None:
+        if self._draw_mode == "line" and self._line_start is not None and self._line_end is not None:
+            end = self._line_end
+            if QtWidgets.QApplication.keyboardModifiers() & QtCore.Qt.ControlModifier:
+                end = self._snap_line_end(self._line_start, end)
+            painter = QtGui.QPainter(self._image)
+            pen = QtGui.QPen(
+                self._brush_color, self._brush_size, QtCore.Qt.SolidLine, QtCore.Qt.RoundCap
+            )
+            painter.setPen(pen)
+            painter.drawLine(self._line_start, end)
+            painter.end()
+            self._line_start = None
+            self._line_end = None
+            self._canvas.update()
         self._drawing = False
         self._last_point = None
 
@@ -368,6 +430,22 @@ class CanvasWidget(QtWidgets.QWidget):
         painter = QtGui.QPainter(self)
         target = QtCore.QRect(0, 0, self.width(), self.height())
         painter.drawImage(target, self._image)
+        parent = self.parent()
+        if (parent._draw_mode == "line" and parent._line_start is not None
+                and parent._line_end is not None):
+            pen = QtGui.QPen(
+                parent._brush_color, parent._brush_size, QtCore.Qt.SolidLine, QtCore.Qt.RoundCap
+            )
+            painter.setPen(pen)
+            start = QtCore.QPoint(
+                int(parent._line_start.x() * self._scale),
+                int(parent._line_start.y() * self._scale),
+            )
+            end = QtCore.QPoint(
+                int(parent._line_end.x() * self._scale),
+                int(parent._line_end.y() * self._scale),
+            )
+            painter.drawLine(start, end)
 
     def mousePressEvent(self, event: QtGui.QMouseEvent) -> None:
         if event.button() != QtCore.Qt.LeftButton:
