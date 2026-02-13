@@ -148,7 +148,6 @@ class FloatingWindow(QtWidgets.QWidget):
         self._pen_button.setCheckable(True)
         self._pen_button.clicked.connect(self._toggle_pen)
         self._pen_button.setFixedSize(32, 32)
-        self._update_pen_button_style()
         self._toolbar_layout.addWidget(self._pen_button)
 
         self._line_button = QtWidgets.QToolButton(self._toolbar)
@@ -157,6 +156,8 @@ class FloatingWindow(QtWidgets.QWidget):
         self._line_button.clicked.connect(self._toggle_line)
         self._line_button.setFixedSize(32, 32)
         self._toolbar_layout.addWidget(self._line_button)
+
+        self._update_pen_button_style()
 
         self._undo_button = QtWidgets.QToolButton(self._toolbar)
         self._undo_button.setText("Undo")
@@ -311,7 +312,8 @@ class FloatingWindow(QtWidgets.QWidget):
             self._color_popup.close()
         self._color_popup = ColorPopup(self._brush_color, self)
         self._color_popup.colorSelected.connect(self._set_brush_color)
-        button_pos = self._pen_button.mapToGlobal(QtCore.QPoint(0, 0))
+        anchor = self._line_button if self._draw_mode == "line" else self._pen_button
+        button_pos = anchor.mapToGlobal(QtCore.QPoint(0, 0))
         self._color_popup.adjustSize()
         popup_height = self._color_popup.sizeHint().height()
         self._color_popup.move(
@@ -334,10 +336,12 @@ class FloatingWindow(QtWidgets.QWidget):
         self._brush_size = size
 
     def _update_pen_button_style(self) -> None:
-        self._pen_button.setStyleSheet(
+        style = (
             "QToolButton { background-color: %s; border: 1px solid #333; }"
             % self._brush_color.name()
         )
+        self._pen_button.setStyleSheet(style)
+        self._line_button.setStyleSheet(style)
 
     def undo(self) -> None:
         if not self._undo_stack:
