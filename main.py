@@ -112,6 +112,7 @@ class FloatingWindow(QtWidgets.QWidget):
         self._brush_color = QtGui.QColor(220, 30, 30)
         self._drawing = False
         self._last_point = None
+        self._undo_stack = []
         self._color_popup = None
         self.setWindowFlags(
             QtCore.Qt.FramelessWindowHint
@@ -147,6 +148,11 @@ class FloatingWindow(QtWidgets.QWidget):
         self._update_pen_button_style()
         self._toolbar_layout.addWidget(self._pen_button)
 
+        self._undo_button = QtWidgets.QToolButton(self._toolbar)
+        self._undo_button.setText("Undo")
+        self._undo_button.clicked.connect(self.undo)
+        self._toolbar_layout.addWidget(self._undo_button)
+
         self._copy_button = QtWidgets.QToolButton(self._toolbar)
         self._copy_button.setText("Copy")
         self._copy_button.clicked.connect(self.copy_to_clipboard)
@@ -170,6 +176,10 @@ class FloatingWindow(QtWidgets.QWidget):
             QtGui.QKeySequence.Copy, self
         )
         self._copy_shortcut.activated.connect(self.copy_to_clipboard)
+        self._undo_shortcut = QtGui.QShortcut(
+            QtGui.QKeySequence.Undo, self
+        )
+        self._undo_shortcut.activated.connect(self.undo)
 
         self._apply_scale()
         self.adjustSize()
@@ -216,7 +226,8 @@ class FloatingWindow(QtWidgets.QWidget):
         self._apply_scale()
 
     def _apply_scale(self) -> None:
-        size = self._base_pixmap.size()
+        ratio = self._base_pixmap.devicePixelRatio()
+        size = self._base_pixmap.size() / ratio
         new_size = QtCore.QSize(
             int(size.width() * self._scale), int(size.height() * self._scale)
         )
@@ -303,9 +314,17 @@ class FloatingWindow(QtWidgets.QWidget):
             % self._brush_color.name()
         )
 
+    def undo(self) -> None:
+        if not self._undo_stack:
+            return
+        self._image = self._undo_stack.pop()
+        self._canvas._image = self._image
+        self._canvas.update()
+
     def start_draw(self, pos: QtCore.QPoint) -> None:
         if not self._pen_active:
             return
+        self._undo_stack.append(self._image.copy())
         self._drawing = True
         self._last_point = pos
 
