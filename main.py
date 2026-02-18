@@ -64,7 +64,12 @@ class CaptureOverlay(QtWidgets.QWidget):
         rect = self._selection_rect()
         if rect is not None and rect.width() > 0 and rect.height() > 0:
             if not self._pixmap.isNull():
-                painter.drawPixmap(rect, self._pixmap, rect)
+                ratio = self._pixmap.devicePixelRatio()
+                source_rect = QtCore.QRect(
+                    int(rect.x() * ratio), int(rect.y() * ratio),
+                    int(rect.width() * ratio), int(rect.height() * ratio),
+                )
+                painter.drawPixmap(rect, self._pixmap, source_rect)
             pen = QtGui.QPen(QtGui.QColor(0, 0, 0), 2)
             painter.setPen(pen)
             painter.drawRect(rect)
