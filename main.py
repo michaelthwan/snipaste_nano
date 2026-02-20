@@ -389,8 +389,9 @@ class FloatingWindow(QtWidgets.QWidget):
             if self._last_point is None:
                 return
             painter = QtGui.QPainter(self._image)
+            painter.setRenderHint(QtGui.QPainter.Antialiasing, True)
             pen = QtGui.QPen(
-                self._brush_color, self._brush_size, QtCore.Qt.SolidLine, QtCore.Qt.RoundCap
+                self._brush_color, self._brush_size, QtCore.Qt.SolidLine, QtCore.Qt.RoundCap, QtCore.Qt.RoundJoin
             )
             painter.setPen(pen)
             painter.drawLine(self._last_point, pos)
@@ -404,8 +405,9 @@ class FloatingWindow(QtWidgets.QWidget):
             if QtWidgets.QApplication.keyboardModifiers() & QtCore.Qt.ControlModifier:
                 end = self._snap_line_end(self._line_start, end)
             painter = QtGui.QPainter(self._image)
+            painter.setRenderHint(QtGui.QPainter.Antialiasing, True)
             pen = QtGui.QPen(
-                self._brush_color, self._brush_size, QtCore.Qt.SolidLine, QtCore.Qt.RoundCap
+                self._brush_color, self._brush_size, QtCore.Qt.SolidLine, QtCore.Qt.RoundCap, QtCore.Qt.RoundJoin
             )
             painter.setPen(pen)
             painter.drawLine(self._line_start, end)
@@ -437,13 +439,15 @@ class CanvasWidget(QtWidgets.QWidget):
 
     def paintEvent(self, _event) -> None:
         painter = QtGui.QPainter(self)
+        painter.setRenderHint(QtGui.QPainter.SmoothPixmapTransform, True)
+        painter.setRenderHint(QtGui.QPainter.Antialiasing, True)
         target = QtCore.QRect(0, 0, self.width(), self.height())
         painter.drawImage(target, self._image)
         parent = self.parent()
         if (parent._draw_mode == "line" and parent._line_start is not None
                 and parent._line_end is not None):
             pen = QtGui.QPen(
-                parent._brush_color, parent._brush_size, QtCore.Qt.SolidLine, QtCore.Qt.RoundCap
+                parent._brush_color, parent._brush_size, QtCore.Qt.SolidLine, QtCore.Qt.RoundCap, QtCore.Qt.RoundJoin
             )
             painter.setPen(pen)
             start = QtCore.QPoint(
