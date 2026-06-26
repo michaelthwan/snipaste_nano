@@ -3,13 +3,121 @@ import signal
 import sys
 from ctypes import wintypes
 
-from PySide6 import QtCore, QtGui, QtWidgets
+from PySide6 import QtCore, QtGui, QtSvg, QtWidgets
 
 WM_HOTKEY = 0x0312
 HOTKEY_ID = 1
 MOD_NOREPEAT = 0x4000
 VK_F1 = 0x70
 MAC_F1_KEYCODE = 122
+SETTINGS_ORG = "Snipaste Nano"
+SETTINGS_APP = "Snipaste Nano"
+SETTING_BRUSH_COLOR = "brush/color"
+SETTING_BRUSH_SIZE = "brush/size"
+MIN_BRUSH_SIZE = 1
+MAX_BRUSH_SIZE = 40
+CURSOR_PIXMAP_SIZE = 33
+TOOL_ICON_SIZE = 22
+TOOL_BUTTON_SIZE = 28
+PALETTE_COLUMNS = 10
+PALETTE_SWATCH_SIZE = 12
+TOOL_BUTTON_STYLE = (
+    "QToolButton { background-color: #f4f7fb; border: 0; padding: 0; }"
+    "QToolButton:hover { background-color: #e7edf5; }"
+    "QToolButton:checked { background-color: #1687f2; }"
+)
+PALETTE_COLORS = [
+    QtGui.QColor("#000000"),
+    QtGui.QColor("#555555"),
+    QtGui.QColor("#8a8a8a"),
+    QtGui.QColor("#ff3030"),
+    QtGui.QColor("#ff8a30"),
+    QtGui.QColor("#fff200"),
+    QtGui.QColor("#35d044"),
+    QtGui.QColor("#24c9ff"),
+    QtGui.QColor("#3388ff"),
+    QtGui.QColor("#7f6bff"),
+    QtGui.QColor("#ffffff"),
+    QtGui.QColor("#bfc4c9"),
+    QtGui.QColor("#707070"),
+    QtGui.QColor("#ffc4c4"),
+    QtGui.QColor("#ffd0a6"),
+    QtGui.QColor("#fff7a8"),
+    QtGui.QColor("#bdf2bf"),
+    QtGui.QColor("#bdefff"),
+    QtGui.QColor("#aacdff"),
+    QtGui.QColor("#c9bfff"),
+]
+
+
+def clamp_brush_size(size: int) -> int:
+    return max(MIN_BRUSH_SIZE, min(MAX_BRUSH_SIZE, int(size)))
+
+
+def build_selection_cursor_pixmap(
+    color: QtGui.QColor, brush_size: int
+) -> QtGui.QPixmap:
+    pixmap = QtGui.QPixmap(CURSOR_PIXMAP_SIZE, CURSOR_PIXMAP_SIZE)
+    pixmap.fill(QtCore.Qt.transparent)
+
+    center = CURSOR_PIXMAP_SIZE // 2
+    painter = QtGui.QPainter(pixmap)
+    painter.setRenderHint(QtGui.QPainter.Antialiasing, False)
+    painter.setPen(QtGui.QPen(color, 1))
+    painter.drawLine(center, 0, center, CURSOR_PIXMAP_SIZE - 1)
+    painter.drawLine(0, center, CURSOR_PIXMAP_SIZE - 1, center)
+
+    radius = max(2, min(10, clamp_brush_size(brush_size) // 2))
+    painter.setRenderHint(QtGui.QPainter.Antialiasing, True)
+    painter.setPen(QtCore.Qt.NoPen)
+    painter.setBrush(color)
+    painter.drawEllipse(QtCore.QPoint(center, center), radius, radius)
+    painter.end()
+    return pixmap
+
+
+def build_tool_icon(name: str, color: QtGui.QColor) -> QtGui.QPixmap:
+    path_map = {
+        "pen": (
+            '<path d="M21.174 6.812a1 1 0 0 0-3.986-3.987'
+            'L3.842 16.174a2 2 0 0 0-.5.83l-1.321 4.352'
+            'a.5.5 0 0 0 .623.622l4.353-1.32a2 2 0 0 0 '
+            '.83-.497z"/>'
+            '<path d="m15 5 4 4"/>'
+        ),
+        "line": '<path d="M4 14l4-4 4 4 8-8"/>',
+        "undo": (
+            '<path d="M9 14 4 9l5-5"/>'
+            '<path d="M4 9h10.5a5.5 5.5 0 0 1 0 11H11"/>'
+        ),
+        "copy": (
+            '<rect width="14" height="14" x="8" y="8" rx="2" ry="2"/>'
+            '<path d="M4 16c-1.1 0-2-.9-2-2V4c0-1.1.9-2 '
+            '2-2h10c1.1 0 2 .9 2 2"/>'
+        ),
+    }
+    pixmap = QtGui.QPixmap(TOOL_ICON_SIZE, TOOL_ICON_SIZE)
+    pixmap.fill(QtCore.Qt.transparent)
+    svg = (
+        '<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" '
+        'viewBox="0 0 24 24" fill="none" stroke="%s" stroke-width="2" '
+        'stroke-linecap="round" stroke-linejoin="round">%s</svg>'
+        % (color.name(), path_map.get(name, '<circle cx="12" cy="12" r="3"/>'))
+    )
+    renderer = QtSvg.QSvgRenderer(QtCore.QByteArray(svg.encode("utf-8")))
+    painter = QtGui.QPainter(pixmap)
+    margin = 2
+    renderer.render(
+        painter,
+        QtCore.QRectF(
+            margin,
+            margin,
+            TOOL_ICON_SIZE - margin * 2,
+            TOOL_ICON_SIZE - margin * 2,
+        ),
+    )
+    painter.end()
+    return pixmap
 
 
 class HotkeyFilter(QtCore.QAbstractNativeEventFilter):
@@ -113,8 +221,9 @@ class FloatingWindow(QtWidgets.QWidget):
         self._image = pixmap.toImage().convertToFormat(QtGui.QImage.Format_ARGB32)
         self._scale = 1.0
         self._pen_active = False
-        self._brush_size = 6
-        self._brush_color = QtGui.QColor(220, 30, 30)
+        self._settings = QtCore.QSettings(SETTINGS_ORG, SETTINGS_APP)
+        self._brush_size = self._load_brush_size()
+        self._brush_color = self._load_brush_color()
         self._drawing = False
         self._last_point = None
         self._draw_mode = "pen"
@@ -140,39 +249,37 @@ class FloatingWindow(QtWidgets.QWidget):
 
         self._toolbar = QtWidgets.QWidget(self)
         self._toolbar.setVisible(False)
+        self._toolbar.setStyleSheet("QWidget { background-color: #f4f7fb; }")
         self._toolbar_layout = QtWidgets.QHBoxLayout(self._toolbar)
-        self._toolbar_layout.setContentsMargins(6, 4, 6, 4)
-        self._toolbar_layout.setSpacing(6)
-
-        self._size_button = SizeButton(self._brush_size, self._brush_color, self)
-        self._size_button.sizeChanged.connect(self._on_brush_size_changed)
-        self._toolbar_layout.addWidget(self._size_button)
-
-        self._pen_button = QtWidgets.QToolButton(self._toolbar)
-        self._pen_button.setText("✎")
-        self._pen_button.setCheckable(True)
-        self._pen_button.clicked.connect(self._toggle_pen)
-        self._pen_button.setFixedSize(32, 32)
-        self._toolbar_layout.addWidget(self._pen_button)
+        self._toolbar_layout.setContentsMargins(1, 1, 1, 1)
+        self._toolbar_layout.setSpacing(1)
 
         self._line_button = QtWidgets.QToolButton(self._toolbar)
-        self._line_button.setText("╱")
         self._line_button.setCheckable(True)
         self._line_button.clicked.connect(self._toggle_line)
-        self._line_button.setFixedSize(32, 32)
+        self._line_button.setFixedSize(TOOL_BUTTON_SIZE, TOOL_BUTTON_SIZE)
+        self._line_button.setIconSize(QtCore.QSize(TOOL_ICON_SIZE, TOOL_ICON_SIZE))
+        self._line_button.setToolTip("Line")
         self._toolbar_layout.addWidget(self._line_button)
 
-        self._update_pen_button_style()
-
-        self._undo_button = QtWidgets.QToolButton(self._toolbar)
-        self._undo_button.setText("Undo")
-        self._undo_button.clicked.connect(self.undo)
-        self._toolbar_layout.addWidget(self._undo_button)
+        self._pen_button = QtWidgets.QToolButton(self._toolbar)
+        self._pen_button.setCheckable(True)
+        self._pen_button.clicked.connect(self._toggle_pen)
+        self._pen_button.setFixedSize(TOOL_BUTTON_SIZE, TOOL_BUTTON_SIZE)
+        self._pen_button.setIconSize(QtCore.QSize(TOOL_ICON_SIZE, TOOL_ICON_SIZE))
+        self._pen_button.setToolTip("Pen")
+        self._toolbar_layout.addWidget(self._pen_button)
 
         self._copy_button = QtWidgets.QToolButton(self._toolbar)
-        self._copy_button.setText("Copy")
+        self._copy_button.setFixedSize(TOOL_BUTTON_SIZE, TOOL_BUTTON_SIZE)
+        self._copy_button.setStyleSheet(TOOL_BUTTON_STYLE)
+        self._copy_button.setIcon(QtGui.QIcon(build_tool_icon("copy", QtGui.QColor("#2c333a"))))
+        self._copy_button.setIconSize(QtCore.QSize(TOOL_ICON_SIZE, TOOL_ICON_SIZE))
+        self._copy_button.setToolTip("Copy")
         self._copy_button.clicked.connect(self.copy_to_clipboard)
         self._toolbar_layout.addWidget(self._copy_button)
+
+        self._update_pen_button_style()
 
         self._toolbar_layout.addStretch(1)
 
@@ -232,10 +339,11 @@ class FloatingWindow(QtWidgets.QWidget):
             self._toggle_toolbar()
 
     def wheelEvent(self, event: QtGui.QWheelEvent) -> None:
-        if self._pen_active:
-            return
         delta = event.angleDelta().y()
         if delta == 0:
+            return
+        if self._pen_active:
+            self.adjust_brush_size_from_wheel_delta(delta)
             return
         factor = 1.1 if delta > 0 else 0.9
         self._scale = max(0.2, min(5.0, self._scale * factor))
@@ -289,12 +397,11 @@ class FloatingWindow(QtWidgets.QWidget):
         if not active:
             self._pen_button.setChecked(False)
             self._line_button.setChecked(False)
+        self._update_pen_button_style()
         self._canvas.set_pen_active(active)
         if not active:
             self.end_draw()
-        self._canvas.setCursor(
-            QtCore.Qt.CrossCursor if active else QtCore.Qt.ArrowCursor
-        )
+        self._update_canvas_cursor()
 
     def _toggle_toolbar(self) -> None:
         self._toolbar.setVisible(not self._toolbar.isVisible())
@@ -323,7 +430,7 @@ class FloatingWindow(QtWidgets.QWidget):
         popup_height = self._color_popup.sizeHint().height()
         self._color_popup.move(
             button_pos.x(),
-            button_pos.y() - popup_height - 4,
+            button_pos.y() - popup_height - 2,
         )
         self._color_popup.show()
 
@@ -334,19 +441,55 @@ class FloatingWindow(QtWidgets.QWidget):
 
     def _set_brush_color(self, color: QtGui.QColor) -> None:
         self._brush_color = color
-        self._update_pen_button_style()
-        self._size_button.set_color(color)
+        self._settings.setValue(SETTING_BRUSH_COLOR, color.name())
+        self._update_canvas_cursor()
 
     def _on_brush_size_changed(self, size: int) -> None:
-        self._brush_size = size
+        self._brush_size = clamp_brush_size(size)
+        self._settings.setValue(SETTING_BRUSH_SIZE, self._brush_size)
+        self._update_canvas_cursor()
+
+    def adjust_brush_size_from_wheel_delta(self, delta: int) -> None:
+        if delta == 0:
+            return
+        step = 1 if delta > 0 else -1
+        self._on_brush_size_changed(self._brush_size + step)
+
+    def _load_brush_color(self) -> QtGui.QColor:
+        value = self._settings.value(SETTING_BRUSH_COLOR, "#dc1e1e")
+        color = QtGui.QColor(str(value))
+        if not color.isValid():
+            return QtGui.QColor(220, 30, 30)
+        return color
+
+    def _load_brush_size(self) -> int:
+        value = self._settings.value(SETTING_BRUSH_SIZE, 6)
+        try:
+            return clamp_brush_size(int(value))
+        except (TypeError, ValueError):
+            return 6
+
+    def _update_canvas_cursor(self) -> None:
+        if not self._pen_active:
+            self._canvas.setCursor(QtCore.Qt.ArrowCursor)
+            return
+        cursor_pixmap = build_selection_cursor_pixmap(
+            self._brush_color, self._brush_size
+        )
+        hot_spot = CURSOR_PIXMAP_SIZE // 2
+        self._canvas.setCursor(QtGui.QCursor(cursor_pixmap, hot_spot, hot_spot))
 
     def _update_pen_button_style(self) -> None:
-        style = (
-            "QToolButton { background-color: %s; border: 1px solid #333; }"
-            % self._brush_color.name()
-        )
-        self._pen_button.setStyleSheet(style)
-        self._line_button.setStyleSheet(style)
+        self._pen_button.setStyleSheet(TOOL_BUTTON_STYLE)
+        self._line_button.setStyleSheet(TOOL_BUTTON_STYLE)
+        active_color = QtGui.QColor("#ffffff")
+        inactive_color = QtGui.QColor("#2c333a")
+        self._pen_button.setIcon(QtGui.QIcon(build_tool_icon(
+            "pen", active_color if self._pen_button.isChecked() else inactive_color
+        )))
+        self._line_button.setIcon(QtGui.QIcon(build_tool_icon(
+            "line", active_color if self._line_button.isChecked() else inactive_color
+        )))
 
     def undo(self) -> None:
         if not self._undo_stack:
@@ -484,6 +627,16 @@ class CanvasWidget(QtWidgets.QWidget):
         else:
             self.parent()._drag_offset = None
 
+    def wheelEvent(self, event: QtGui.QWheelEvent) -> None:
+        if not self._pen_active:
+            event.ignore()
+            return
+        delta = event.angleDelta().y()
+        if delta == 0:
+            return
+        self.parent().adjust_brush_size_from_wheel_delta(delta)
+        event.accept()
+
     def _map_to_image(self, point: QtCore.QPoint) -> QtCore.QPoint:
         if self._scale <= 0:
             return point
@@ -501,7 +654,11 @@ class SizeButton(QtWidgets.QToolButton):
         super().__init__(parent)
         self._size = size
         self._color = color
-        self.setFixedSize(32, 32)
+        self.setFixedSize(TOOL_BUTTON_SIZE, TOOL_BUTTON_SIZE)
+        self.setStyleSheet(
+            "QToolButton { background-color: #1687f2; border: 0; }"
+            "QToolButton:hover { background-color: #0f78dd; }"
+        )
         self._update_icon()
 
     def wheelEvent(self, event: QtGui.QWheelEvent) -> None:
@@ -509,7 +666,7 @@ class SizeButton(QtWidgets.QToolButton):
         if delta == 0:
             return
         step = 1 if delta > 0 else -1
-        self._size = max(1, min(40, self._size + step))
+        self._size = clamp_brush_size(self._size + step)
         self._update_icon()
         self.sizeChanged.emit(self._size)
 
@@ -517,16 +674,23 @@ class SizeButton(QtWidgets.QToolButton):
         self._color = color
         self._update_icon()
 
+    def set_size(self, size: int) -> None:
+        self._size = clamp_brush_size(size)
+        self._update_icon()
+
     def _update_icon(self) -> None:
-        pixmap = QtGui.QPixmap(24, 24)
+        pixmap = QtGui.QPixmap(TOOL_ICON_SIZE, TOOL_ICON_SIZE)
         pixmap.fill(QtCore.Qt.transparent)
         painter = QtGui.QPainter(pixmap)
         painter.setRenderHint(QtGui.QPainter.Antialiasing, True)
-        radius = max(2, min(10, self._size // 2))
-        center = QtCore.QPoint(12, 12)
-        painter.setBrush(self._color)
+        radius = max(2, min(5, self._size // 3))
+        center = QtCore.QPoint(6, 11)
+        painter.setBrush(QtGui.QColor("#ffffff"))
         painter.setPen(QtCore.Qt.NoPen)
         painter.drawEllipse(center, radius, radius)
+        painter.setBrush(self._color)
+        painter.setPen(QtCore.Qt.NoPen)
+        painter.drawEllipse(QtCore.QPoint(12, 4), 2, 2)
         painter.end()
         self.setIcon(QtGui.QIcon(pixmap))
         self.setIconSize(pixmap.size())
@@ -538,35 +702,34 @@ class ColorPopup(QtWidgets.QFrame):
 
     def __init__(self, current: QtGui.QColor, parent=None) -> None:
         super().__init__(parent, QtCore.Qt.Popup | QtCore.Qt.FramelessWindowHint)
-        self._colors = [
-            QtGui.QColor(0, 0, 0),
-            QtGui.QColor(255, 255, 255),
-            QtGui.QColor(220, 30, 30),
-            QtGui.QColor(30, 120, 255),
-            QtGui.QColor(30, 180, 90),
-            QtGui.QColor(255, 200, 0),
-            QtGui.QColor(160, 80, 200),
-            QtGui.QColor(255, 120, 40),
-            QtGui.QColor(120, 120, 120),
-            QtGui.QColor(40, 40, 40),
-        ]
+        self._colors = PALETTE_COLORS
+        self.setStyleSheet(
+            "QFrame { background-color: #f4f7fb; border: 1px solid #9aa8b6; }"
+        )
         layout = QtWidgets.QGridLayout(self)
-        layout.setContentsMargins(6, 6, 6, 6)
-        layout.setSpacing(4)
+        layout.setContentsMargins(3, 3, 3, 3)
+        layout.setHorizontalSpacing(1)
+        layout.setVerticalSpacing(1)
+
+        current_button = QtWidgets.QToolButton(self)
+        current_button.setFixedSize(24, 24)
+        current_button.setStyleSheet(
+            "QToolButton { background-color: %s; border: 1px solid #222; }"
+            % current.name()
+        )
+        current_button.clicked.connect(lambda _=False, c=current: self._select(c))
+        layout.addWidget(current_button, 0, 0, 2, 1)
+
         for i, color in enumerate(self._colors):
             button = QtWidgets.QToolButton(self)
-            button.setFixedSize(20, 20)
+            button.setFixedSize(PALETTE_SWATCH_SIZE, PALETTE_SWATCH_SIZE)
+            border = "2px solid #1687f2" if color == current else "1px solid #666"
             button.setStyleSheet(
-                "QToolButton { background-color: %s; border: 1px solid #222; }"
-                % color.name()
+                "QToolButton { background-color: %s; border: %s; padding: 0; }"
+                % (color.name(), border)
             )
-            if color == current:
-                button.setStyleSheet(
-                    "QToolButton { background-color: %s; border: 2px solid #fff; }"
-                    % color.name()
-                )
             button.clicked.connect(lambda _=False, c=color: self._select(c))
-            layout.addWidget(button, i // 5, i % 5)
+            layout.addWidget(button, i // PALETTE_COLUMNS, (i % PALETTE_COLUMNS) + 1)
 
     def _select(self, color: QtGui.QColor) -> None:
         self.colorSelected.emit(color)
