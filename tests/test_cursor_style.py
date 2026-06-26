@@ -3,7 +3,7 @@ import unittest
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
-from PySide6 import QtGui, QtWidgets
+from PySide6 import QtCore, QtGui, QtWidgets
 
 from main import (
     PALETTE_COLUMNS,
@@ -13,6 +13,8 @@ from main import (
     build_selection_cursor_pixmap,
     build_tool_icon,
     clamp_brush_size,
+    clamp_text_size,
+    draw_text_on_image,
     SizeButton,
 )
 
@@ -26,6 +28,11 @@ class CursorStyleTest(unittest.TestCase):
         self.assertEqual(clamp_brush_size(-5), 1)
         self.assertEqual(clamp_brush_size(6), 6)
         self.assertEqual(clamp_brush_size(99), 40)
+
+    def test_text_size_is_clamped_to_supported_range(self) -> None:
+        self.assertEqual(clamp_text_size(-5), 8)
+        self.assertEqual(clamp_text_size(18), 18)
+        self.assertEqual(clamp_text_size(200), 96)
 
     def test_selection_cursor_uses_color_for_crosshair_and_center_dot(self) -> None:
         color = QtGui.QColor(17, 130, 240)
@@ -53,7 +60,7 @@ class CursorStyleTest(unittest.TestCase):
 
         self.assertEqual(window._toolbar.findChildren(SizeButton), [])
 
-    def test_toolbar_only_contains_line_pen_and_copy_buttons(self) -> None:
+    def test_toolbar_contains_line_pen_text_and_copy_buttons(self) -> None:
         window = FloatingWindow(QtGui.QPixmap(20, 20))
         tooltips = []
         for i in range(window._toolbar_layout.count()):
@@ -61,7 +68,7 @@ class CursorStyleTest(unittest.TestCase):
             if isinstance(widget, QtWidgets.QToolButton):
                 tooltips.append(widget.toolTip())
 
-        self.assertEqual(tooltips, ["Line", "Pen", "Copy"])
+        self.assertEqual(tooltips, ["Line", "Pen", "Text", "Copy"])
 
     def test_palette_matches_compact_reference_grid(self) -> None:
         self.assertEqual(len(PALETTE_COLORS), 20)
@@ -72,7 +79,7 @@ class CursorStyleTest(unittest.TestCase):
 
     def test_tool_icons_have_readable_compact_glyphs(self) -> None:
         self.assertEqual(TOOL_ICON_SIZE, 22)
-        for name in ("pen", "line", "copy"):
+        for name in ("pen", "line", "text", "copy"):
             icon = build_tool_icon(name, QtGui.QColor("#222222"))
             image = icon.toImage()
 
@@ -93,6 +100,21 @@ class CursorStyleTest(unittest.TestCase):
             self.assertLessEqual(max(xs), TOOL_ICON_SIZE - 3, name)
             self.assertGreaterEqual(min(ys), 2, name)
             self.assertLessEqual(max(ys), TOOL_ICON_SIZE - 3, name)
+
+    def test_draw_text_on_image_renders_text_color(self) -> None:
+        image = QtGui.QImage(120, 60, QtGui.QImage.Format_ARGB32)
+        image.fill(QtGui.QColor("#ffffff"))
+        color = QtGui.QColor("#ff3030")
+
+        draw_text_on_image(image, "Hi", QtCore.QPoint(8, 8), color, 20)
+
+        changed_pixels = 0
+        for y in range(image.height()):
+            for x in range(image.width()):
+                pixel = image.pixelColor(x, y)
+                if pixel.red() > 200 and pixel.green() < 120 and pixel.blue() < 120:
+                    changed_pixels += 1
+        self.assertGreater(changed_pixels, 0)
 
 
 if __name__ == "__main__":

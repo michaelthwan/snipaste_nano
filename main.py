@@ -14,8 +14,11 @@ SETTINGS_ORG = "Snipaste Nano"
 SETTINGS_APP = "Snipaste Nano"
 SETTING_BRUSH_COLOR = "brush/color"
 SETTING_BRUSH_SIZE = "brush/size"
+SETTING_TEXT_SIZE = "text/size"
 MIN_BRUSH_SIZE = 1
 MAX_BRUSH_SIZE = 40
+MIN_TEXT_SIZE = 8
+MAX_TEXT_SIZE = 96
 CURSOR_PIXMAP_SIZE = 33
 TOOL_ICON_SIZE = 22
 TOOL_BUTTON_SIZE = 28
@@ -52,6 +55,10 @@ PALETTE_COLORS = [
 
 def clamp_brush_size(size: int) -> int:
     return max(MIN_BRUSH_SIZE, min(MAX_BRUSH_SIZE, int(size)))
+
+
+def clamp_text_size(size: int) -> int:
+    return max(MIN_TEXT_SIZE, min(MAX_TEXT_SIZE, int(size)))
 
 
 def build_selection_cursor_pixmap(
@@ -95,6 +102,7 @@ def build_tool_icon(name: str, color: QtGui.QColor) -> QtGui.QPixmap:
             '<path d="M4 16c-1.1 0-2-.9-2-2V4c0-1.1.9-2 '
             '2-2h10c1.1 0 2 .9 2 2"/>'
         ),
+        "text": '<path d="M4 7V4h16v3"/><path d="M9 20h6"/><path d="M12 4v16"/>',
     }
     pixmap = QtGui.QPixmap(TOOL_ICON_SIZE, TOOL_ICON_SIZE)
     pixmap.fill(QtCore.Qt.transparent)
@@ -118,6 +126,28 @@ def build_tool_icon(name: str, color: QtGui.QColor) -> QtGui.QPixmap:
     )
     painter.end()
     return pixmap
+
+
+def draw_text_on_image(
+    image: QtGui.QImage,
+    text: str,
+    position: QtCore.QPoint,
+    color: QtGui.QColor,
+    font_size: int,
+) -> None:
+    if not text:
+        return
+    painter = QtGui.QPainter(image)
+    painter.setRenderHint(QtGui.QPainter.Antialiasing, True)
+    painter.setRenderHint(QtGui.QPainter.TextAntialiasing, True)
+    font = QtGui.QFont()
+    font.setPixelSize(clamp_text_size(font_size))
+    painter.setFont(font)
+    painter.setPen(color)
+    metrics = QtGui.QFontMetrics(font)
+    baseline = QtCore.QPoint(position.x(), position.y() + metrics.ascent())
+    painter.drawText(baseline, text)
+    painter.end()
 
 
 class HotkeyFilter(QtCore.QAbstractNativeEventFilter):
@@ -224,6 +254,9 @@ class FloatingWindow(QtWidgets.QWidget):
         self._settings = QtCore.QSettings(SETTINGS_ORG, SETTINGS_APP)
         self._brush_size = self._load_brush_size()
         self._brush_color = self._load_brush_color()
+        self._text_size = self._load_text_size()
+        self._text_editor = None
+        self._text_image_pos = None
         self._drawing = False
         self._last_point = None
         self._draw_mode = "pen"
@@ -269,6 +302,14 @@ class FloatingWindow(QtWidgets.QWidget):
         self._pen_button.setIconSize(QtCore.QSize(TOOL_ICON_SIZE, TOOL_ICON_SIZE))
         self._pen_button.setToolTip("Pen")
         self._toolbar_layout.addWidget(self._pen_button)
+
+        self._text_button = QtWidgets.QToolButton(self._toolbar)
+        self._text_button.setCheckable(True)
+        self._text_button.clicked.connect(self._toggle_text)
+        self._text_button.setFixedSize(TOOL_BUTTON_SIZE, TOOL_BUTTON_SIZE)
+        self._text_button.setIconSize(QtCore.QSize(TOOL_ICON_SIZE, TOOL_ICON_SIZE))
+        self._text_button.setToolTip("Text")
+        self._toolbar_layout.addWidget(self._text_button)
 
         self._copy_button = QtWidgets.QToolButton(self._toolbar)
         self._copy_button.setFixedSize(TOOL_BUTTON_SIZE, TOOL_BUTTON_SIZE)
@@ -343,7 +384,10 @@ class FloatingWindow(QtWidgets.QWidget):
         if delta == 0:
             return
         if self._pen_active:
-            self.adjust_brush_size_from_wheel_delta(delta)
+            if self._draw_mode == "text":
+                self.adjust_text_size_from_wheel_delta(delta)
+            else:
+                self.adjust_brush_size_from_wheel_delta(delta)
             return
         factor = 1.1 if delta > 0 else 0.9
         self._scale = max(0.2, min(5.0, self._scale * factor))
@@ -376,6 +420,7 @@ class FloatingWindow(QtWidgets.QWidget):
         if self._pen_button.isChecked():
             self._draw_mode = "pen"
             self._line_button.setChecked(False)
+            self._text_button.setChecked(False)
             self._set_pen_active(True)
             self._show_color_popup()
         else:
@@ -386,6 +431,18 @@ class FloatingWindow(QtWidgets.QWidget):
         if self._line_button.isChecked():
             self._draw_mode = "line"
             self._pen_button.setChecked(False)
+            self._text_button.setChecked(False)
+            self._set_pen_active(True)
+            self._show_color_popup()
+        else:
+            self._set_pen_active(False)
+            self._close_color_popup()
+
+    def _toggle_text(self) -> None:
+        if self._text_button.isChecked():
+            self._draw_mode = "text"
+            self._line_button.setChecked(False)
+            self._pen_button.setChecked(False)
             self._set_pen_active(True)
             self._show_color_popup()
         else:
@@ -395,8 +452,10 @@ class FloatingWindow(QtWidgets.QWidget):
     def _set_pen_active(self, active: bool) -> None:
         self._pen_active = active
         if not active:
+            self._cancel_text_editor()
             self._pen_button.setChecked(False)
             self._line_button.setChecked(False)
+            self._text_button.setChecked(False)
         self._update_pen_button_style()
         self._canvas.set_pen_active(active)
         if not active:
@@ -411,6 +470,9 @@ class FloatingWindow(QtWidgets.QWidget):
         self.adjustSize()
 
     def _handle_escape(self) -> None:
+        if self._text_editor is not None:
+            self._cancel_text_editor()
+            return
         if self._pen_active or self._toolbar.isVisible():
             self._set_pen_active(False)
             self._toolbar.setVisible(False)
@@ -424,7 +486,12 @@ class FloatingWindow(QtWidgets.QWidget):
             self._color_popup.close()
         self._color_popup = ColorPopup(self._brush_color, self)
         self._color_popup.colorSelected.connect(self._set_brush_color)
-        anchor = self._line_button if self._draw_mode == "line" else self._pen_button
+        if self._draw_mode == "line":
+            anchor = self._line_button
+        elif self._draw_mode == "text":
+            anchor = self._text_button
+        else:
+            anchor = self._pen_button
         button_pos = anchor.mapToGlobal(QtCore.QPoint(0, 0))
         self._color_popup.adjustSize()
         popup_height = self._color_popup.sizeHint().height()
@@ -442,6 +509,7 @@ class FloatingWindow(QtWidgets.QWidget):
     def _set_brush_color(self, color: QtGui.QColor) -> None:
         self._brush_color = color
         self._settings.setValue(SETTING_BRUSH_COLOR, color.name())
+        self._update_text_editor_font()
         self._update_canvas_cursor()
 
     def _on_brush_size_changed(self, size: int) -> None:
@@ -454,6 +522,74 @@ class FloatingWindow(QtWidgets.QWidget):
             return
         step = 1 if delta > 0 else -1
         self._on_brush_size_changed(self._brush_size + step)
+
+    def adjust_text_size_from_wheel_delta(self, delta: int) -> None:
+        if delta == 0:
+            return
+        step = 1 if delta > 0 else -1
+        self._text_size = clamp_text_size(self._text_size + step)
+        self._settings.setValue(SETTING_TEXT_SIZE, self._text_size)
+        self._update_text_editor_font()
+
+    def start_text_edit(
+        self, image_pos: QtCore.QPoint, local_pos: QtCore.QPoint
+    ) -> None:
+        if self._draw_mode != "text":
+            return
+        self._commit_text_editor()
+        self._text_image_pos = image_pos
+        editor = QtWidgets.QLineEdit(self._canvas)
+        editor.setFrame(False)
+        editor.setAttribute(QtCore.Qt.WA_TranslucentBackground, True)
+        editor.returnPressed.connect(self._commit_text_editor)
+        editor.editingFinished.connect(self._commit_text_editor)
+        self._text_editor = editor
+        self._update_text_editor_font()
+        editor.move(local_pos)
+        editor.setFixedWidth(max(160, int(220 * self._scale)))
+        editor.show()
+        editor.setFocus()
+
+    def _update_text_editor_font(self) -> None:
+        if self._text_editor is None:
+            return
+        font = QtGui.QFont()
+        font.setPixelSize(max(1, int(self._text_size * self._scale)))
+        self._text_editor.setFont(font)
+        metrics = QtGui.QFontMetrics(font)
+        self._text_editor.setFixedHeight(metrics.height() + 6)
+        self._text_editor.setStyleSheet(
+            "QLineEdit { color: %s; background: transparent; border: 0; }"
+            % self._brush_color.name()
+        )
+
+    def _commit_text_editor(self) -> None:
+        if self._text_editor is None:
+            return
+        editor = self._text_editor
+        text = editor.text()
+        image_pos = self._text_image_pos
+        self._text_editor = None
+        self._text_image_pos = None
+        editor.blockSignals(True)
+        editor.hide()
+        editor.deleteLater()
+        if text.strip() and image_pos is not None:
+            self._undo_stack.append(self._image.copy())
+            draw_text_on_image(
+                self._image, text, image_pos, self._brush_color, self._text_size
+            )
+            self._canvas.update()
+
+    def _cancel_text_editor(self) -> None:
+        if self._text_editor is None:
+            return
+        editor = self._text_editor
+        self._text_editor = None
+        self._text_image_pos = None
+        editor.blockSignals(True)
+        editor.hide()
+        editor.deleteLater()
 
     def _load_brush_color(self) -> QtGui.QColor:
         value = self._settings.value(SETTING_BRUSH_COLOR, "#dc1e1e")
@@ -469,9 +605,19 @@ class FloatingWindow(QtWidgets.QWidget):
         except (TypeError, ValueError):
             return 6
 
+    def _load_text_size(self) -> int:
+        value = self._settings.value(SETTING_TEXT_SIZE, 18)
+        try:
+            return clamp_text_size(int(value))
+        except (TypeError, ValueError):
+            return 18
+
     def _update_canvas_cursor(self) -> None:
         if not self._pen_active:
             self._canvas.setCursor(QtCore.Qt.ArrowCursor)
+            return
+        if self._draw_mode == "text":
+            self._canvas.setCursor(QtCore.Qt.IBeamCursor)
             return
         cursor_pixmap = build_selection_cursor_pixmap(
             self._brush_color, self._brush_size
@@ -482,6 +628,7 @@ class FloatingWindow(QtWidgets.QWidget):
     def _update_pen_button_style(self) -> None:
         self._pen_button.setStyleSheet(TOOL_BUTTON_STYLE)
         self._line_button.setStyleSheet(TOOL_BUTTON_STYLE)
+        self._text_button.setStyleSheet(TOOL_BUTTON_STYLE)
         active_color = QtGui.QColor("#ffffff")
         inactive_color = QtGui.QColor("#2c333a")
         self._pen_button.setIcon(QtGui.QIcon(build_tool_icon(
@@ -489,6 +636,9 @@ class FloatingWindow(QtWidgets.QWidget):
         )))
         self._line_button.setIcon(QtGui.QIcon(build_tool_icon(
             "line", active_color if self._line_button.isChecked() else inactive_color
+        )))
+        self._text_button.setIcon(QtGui.QIcon(build_tool_icon(
+            "text", active_color if self._text_button.isChecked() else inactive_color
         )))
 
     def undo(self) -> None:
@@ -607,13 +757,20 @@ class CanvasWidget(QtWidgets.QWidget):
         if event.button() != QtCore.Qt.LeftButton:
             return
         if self._pen_active:
-            self.parent().start_draw(self._map_to_image(event.position().toPoint()))
+            local_pos = event.position().toPoint()
+            image_pos = self._map_to_image(local_pos)
+            if self.parent()._draw_mode == "text":
+                self.parent().start_text_edit(image_pos, local_pos)
+            else:
+                self.parent().start_draw(image_pos)
         else:
             self.parent()._begin_drag(
                 event.globalPosition().toPoint(), event.position().toPoint()
             )
 
     def mouseMoveEvent(self, event: QtGui.QMouseEvent) -> None:
+        if self._pen_active and self.parent()._draw_mode == "text":
+            return
         if self._pen_active:
             self.parent().draw_to(self._map_to_image(event.position().toPoint()))
         else:
@@ -621,6 +778,8 @@ class CanvasWidget(QtWidgets.QWidget):
 
     def mouseReleaseEvent(self, event: QtGui.QMouseEvent) -> None:
         if event.button() != QtCore.Qt.LeftButton:
+            return
+        if self._pen_active and self.parent()._draw_mode == "text":
             return
         if self._pen_active:
             self.parent().end_draw()
@@ -634,7 +793,10 @@ class CanvasWidget(QtWidgets.QWidget):
         delta = event.angleDelta().y()
         if delta == 0:
             return
-        self.parent().adjust_brush_size_from_wheel_delta(delta)
+        if self.parent()._draw_mode == "text":
+            self.parent().adjust_text_size_from_wheel_delta(delta)
+        else:
+            self.parent().adjust_brush_size_from_wheel_delta(delta)
         event.accept()
 
     def _map_to_image(self, point: QtCore.QPoint) -> QtCore.QPoint:
